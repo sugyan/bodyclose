@@ -156,3 +156,14 @@ func neitherClosedNorConsumed() {
 	_ = resp
 	// Body is neither closed nor consumed - this is a real problem
 }
+
+func closeBeforeConsume() {
+	resp, err := http.Get("http://example.com/") // want "response body must be closed and consumed"
+	if err != nil {
+		return
+	}
+	resp.Body.Close() // Closed first
+	io.ReadAll(resp.Body) // Then trying to consume - this would fail at runtime
+	// NOTE: Current implementation doesn't detect execution order,
+	// but this would fail at runtime anyway
+}

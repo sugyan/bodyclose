@@ -43,6 +43,8 @@ When `-check-consumption` is enabled, the following patterns are recognized as v
 
 **Note**: Patterns not listed above may trigger false positives even when the body is properly consumed. Use `//nolint:bodyclose` to suppress warnings for custom consumption patterns that are not automatically detected.
 
+**Limitation**: The analyzer does not detect execution order, so patterns where `Close()` is called before consumption (which would fail at runtime) are not specifically flagged.
+
 Example of suppressing false positives:
 ```go
 func customBodyProcessing() {
