@@ -52,12 +52,12 @@ type runner struct {
 func run(pass *analysis.Pass) (interface{}, error) {
 	// Get the flag value from the analyzer
 	checkConsumption := pass.Analyzer.Flags.Lookup("check-consumption").Value.(flag.Getter).Get().(bool)
-	
+
 	r := runner{
 		pass:             pass,
 		checkConsumption: checkConsumption,
 	}
-	
+
 	return runWithRunner(pass, &r)
 }
 
@@ -315,6 +315,9 @@ func (r *runner) getReqCall(instr ssa.Instruction) (*ssa.Call, bool) {
 		strings.Contains(callType, "net/http.ResponseController") {
 		return nil, false
 	}
+
+	// Any function call that returns *http.Response should be checked
+	// This includes both direct HTTP client calls and wrapper functions
 	return call, true
 }
 
@@ -348,19 +351,57 @@ func (r *runner) getBodyOp(instr ssa.Instruction) (*ssa.UnOp, bool) {
 }
 
 func (r *runner) isBodyConsumed(bodyOp *ssa.UnOp, instr ssa.Instruction) bool {
-	// Search the entire function for known consumption functions
 	fn := bodyOp.Block().Parent()
-	
+
+	// Search for consumption functions that specifically consume this response body
 	for _, block := range fn.Blocks {
 		for _, blockInstr := range block.Instrs {
 			if call, ok := blockInstr.(*ssa.Call); ok {
-				if r.isConsumptionFunction(call) {
+				if r.isConsumptionFunction(call) && r.callConsumesResponseBody(call, bodyOp) {
 					return true
 				}
 			}
 		}
 	}
-	
+
+	return false
+}
+
+func (r *runner) callConsumesResponseBody(call *ssa.Call, responseBodyOp *ssa.UnOp) bool {
+	// Get the FieldAddr of the response body we're checking
+	responseBodyFieldAddr, ok := responseBodyOp.X.(*ssa.FieldAddr)
+	if !ok {
+		return false
+	}
+
+	// Check if any argument to the call refers to this specific response body
+	for _, arg := range call.Call.Args {
+		if r.argIsResponseBody(arg, responseBodyFieldAddr) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func (r *runner) argIsResponseBody(arg ssa.Value, responseBodyFieldAddr *ssa.FieldAddr) bool {
+	switch v := arg.(type) {
+	case *ssa.FieldAddr:
+		// Direct field access - check if it's accessing Body field of same response
+		return v.X == responseBodyFieldAddr.X && v.Field == responseBodyFieldAddr.Field
+	case *ssa.UnOp:
+		// Dereference of field access - check if it's dereferencing the same response body field
+		if fieldAddr, ok := v.X.(*ssa.FieldAddr); ok {
+			return fieldAddr.X == responseBodyFieldAddr.X && fieldAddr.Field == responseBodyFieldAddr.Field
+		}
+	case *ssa.ChangeInterface:
+		// Type conversion - check if it converts the response body
+		if unOp, ok := v.X.(*ssa.UnOp); ok {
+			if fieldAddr, ok := unOp.X.(*ssa.FieldAddr); ok {
+				return fieldAddr.X == responseBodyFieldAddr.X && fieldAddr.Field == responseBodyFieldAddr.Field
+			}
+		}
+	}
 	return false
 }
 
@@ -370,44 +411,16 @@ func (r *runner) isConsumptionFunction(call *ssa.Call) bool {
 		if callee.Pkg != nil {
 			pkg := callee.Pkg.Pkg.Path()
 			name := callee.Name()
-			
+
 			// Check for known consumption functions
 			if (pkg == ioPath && (name == "Copy" || name == "ReadAll")) ||
-			   (pkg == "io/ioutil" && name == "ReadAll") ||
-			   (pkg == "encoding/json" && name == "NewDecoder") ||
-			   (pkg == "bufio" && (name == "NewScanner" || name == "NewReader")) {
+				(pkg == "io/ioutil" && name == "ReadAll") ||
+				(pkg == "encoding/json" && name == "NewDecoder") ||
+				(pkg == "bufio" && (name == "NewScanner" || name == "NewReader")) {
 				return true
 			}
 		}
 	}
-	return false
-}
-
-func (r *runner) refersToBody(val ssa.Value, bodyOp *ssa.UnOp) bool {
-	// Direct reference
-	if val == bodyOp {
-		return true
-	}
-	
-	// Check if the value is derived from the body through a chain of operations
-	switch v := val.(type) {
-	case *ssa.UnOp:
-		// Check if this UnOp operates on the body
-		if v.X == bodyOp {
-			return true
-		}
-	case *ssa.FieldAddr:
-		// Check if this is accessing a field of the body
-		if v.X == bodyOp {
-			return true
-		}
-	case *ssa.ChangeInterface:
-		// Check if this is a type conversion of the body
-		if v.X == bodyOp {
-			return true
-		}
-	}
-	
 	return false
 }
 

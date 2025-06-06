@@ -26,11 +26,11 @@ var ConsumptionAnalyzer = &analysis.Analyzer{
 func runWithConsumption(pass *analysis.Pass) (interface{}, error) {
 	// Force consumption checking to true
 	checkConsumption := true
-	
+
 	r := runner{
 		pass:             pass,
 		checkConsumption: checkConsumption,
 	}
-	
+
 	return runWithRunner(pass, &r)
 }
