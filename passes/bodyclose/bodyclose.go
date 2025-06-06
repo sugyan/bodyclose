@@ -1,6 +1,7 @@
 package bodyclose
 
 import (
+	"flag"
 	"fmt"
 	"go/ast"
 	"go/types"
@@ -13,6 +14,10 @@ import (
 	"golang.org/x/tools/go/ssa"
 )
 
+var (
+	checkConsumption = flag.Bool("check-consumption", false, "also check that response body is consumed before closing")
+)
+
 var Analyzer = &analysis.Analyzer{
 	Name: "bodyclose",
 	Doc:  Doc,
@@ -20,22 +25,30 @@ var Analyzer = &analysis.Analyzer{
 	Requires: []*analysis.Analyzer{
 		buildssa.Analyzer,
 	},
+	Flags: func() flag.FlagSet {
+		fs := flag.NewFlagSet("bodyclose", flag.ExitOnError)
+		fs.BoolVar(checkConsumption, "check-consumption", false, "also check that response body is consumed before closing")
+		return *fs
+	}(),
 }
 
 const (
 	Doc = "checks whether HTTP response body is closed successfully"
 
 	nethttpPath = "net/http"
+	ioPath      = "io"
 	closeMethod = "Close"
 )
 
 type runner struct {
-	pass      *analysis.Pass
-	resObj    types.Object
-	resTyp    *types.Pointer
-	bodyObj   types.Object
-	closeMthd *types.Func
-	skipFile  map[*ast.File]bool
+	pass         *analysis.Pass
+	resObj       types.Object
+	resTyp       *types.Pointer
+	bodyObj      types.Object
+	closeMthd    *types.Func
+	skipFile     map[*ast.File]bool
+	ioDiscardObj types.Object
+	ioCopyObj    types.Object
 }
 
 // run executes an analysis for the pass. The receiver is passed
@@ -48,6 +61,12 @@ func (r runner) run(pass *analysis.Pass) (interface{}, error) {
 	if r.resObj == nil {
 		// skip checking
 		return nil, nil
+	}
+
+	// Initialize io objects if consumption checking is enabled
+	if *checkConsumption {
+		r.ioDiscardObj = analysisutil.LookupFromImports(pass.Pkg.Imports(), ioPath, "Discard")
+		r.ioCopyObj = analysisutil.LookupFromImports(pass.Pkg.Imports(), ioPath, "Copy")
 	}
 
 	resNamed, ok := r.resObj.Type().(*types.Named)

@@ -22,6 +22,14 @@ $ go vet -vettool=$(which bodyclose) github.com/timakin/go_api/...
 internal/httpclient/httpclient.go:13:13: response body must be closed
 ```
 
+### Options
+
+You can enable additional checks with the `-check-consumption` flag to also verify that response bodies are consumed before closing:
+
+```bash
+$ go vet -vettool=$(which bodyclose) -bodyclose.check-consumption github.com/timakin/go_api/...
+```
+
 When Go is lower than 1.12, just run `bodyclose` command with the package name (import path).
 
 But it cannot accept some options such as `--tags`.
