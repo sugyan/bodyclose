@@ -24,7 +24,7 @@ internal/httpclient/httpclient.go:13:13: response body must be closed
 
 ### Options
 
-You can enable additional checks with the `-check-consumption` flag to also verify that response bodies are consumed before closing:
+You can enable additional checks with the `-check-consumption` flag to also verify that response bodies are consumed:
 
 ```bash
 $ go vet -vettool=$(which bodyclose) -bodyclose.check-consumption github.com/timakin/go_api/...
@@ -41,9 +41,9 @@ When `-check-consumption` is enabled, the following patterns are recognized as v
 - `bufio.NewScanner(resp.Body)`
 - `bufio.NewReader(resp.Body)`
 
-**Note**: Patterns not listed above may trigger false positives even when the body is properly consumed. Use `//nolint:bodyclose` to suppress warnings for custom consumption patterns that are not automatically detected.
+##### Limitations and False Positives
 
-**Limitation**: The analyzer does not detect execution order, so patterns where `Close()` is called before consumption (which would fail at runtime) are not specifically flagged.
+**Note**: Patterns not listed above may trigger false positives even when the body is properly consumed. Use `//nolint:bodyclose` to suppress warnings for custom consumption patterns that are not automatically detected.
 
 Example of suppressing false positives:
 ```go
@@ -56,6 +56,10 @@ func customBodyProcessing() {
     resp.Body.Read(buf) // This actually consumes the body
 }
 ```
+
+**Limitation**: The analyzer does not detect execution order, so patterns where `Close()` is called before consumption (which would fail at runtime) are not specifically flagged.
+
+### Legacy Usage (Go < 1.12)
 
 When Go is lower than 1.12, just run `bodyclose` command with the package name (import path).
 

@@ -1,7 +1,6 @@
 package bodyclose
 
 import (
-	"flag"
 	"fmt"
 	"go/ast"
 	"go/types"
@@ -21,12 +20,13 @@ var Analyzer = &analysis.Analyzer{
 	Requires: []*analysis.Analyzer{
 		buildssa.Analyzer,
 	},
-	Flags: func() flag.FlagSet {
-		fs := flag.NewFlagSet("bodyclose", flag.ExitOnError)
-		fs.Bool("check-consumption", false, "also check that response body is consumed before closing")
-		return *fs
-	}(),
 }
+
+func init() {
+	Analyzer.Flags.BoolVar(&checkConsumptionFlag, "check-consumption", false, "also check that response body is consumed")
+}
+
+var checkConsumptionFlag bool
 
 const (
 	Doc = "checks whether HTTP response body is closed successfully"
@@ -43,19 +43,14 @@ type runner struct {
 	bodyObj          types.Object
 	closeMthd        *types.Func
 	skipFile         map[*ast.File]bool
-	ioDiscardObj     types.Object
-	ioCopyObj        types.Object
 	checkConsumption bool
 }
 
 // run executes an analysis for the pass
 func run(pass *analysis.Pass) (interface{}, error) {
-	// Get the flag value from the analyzer
-	checkConsumption := pass.Analyzer.Flags.Lookup("check-consumption").Value.(flag.Getter).Get().(bool)
-
 	r := runner{
 		pass:             pass,
-		checkConsumption: checkConsumption,
+		checkConsumption: checkConsumptionFlag,
 	}
 
 	return runWithRunner(pass, &r)
@@ -69,12 +64,6 @@ func runWithRunner(pass *analysis.Pass, r *runner) (interface{}, error) {
 	if r.resObj == nil {
 		// skip checking
 		return nil, nil
-	}
-
-	// Initialize io objects if consumption checking is enabled
-	if r.checkConsumption {
-		r.ioDiscardObj = analysisutil.LookupFromImports(pass.Pkg.Imports(), ioPath, "Discard")
-		r.ioCopyObj = analysisutil.LookupFromImports(pass.Pkg.Imports(), ioPath, "Copy")
 	}
 
 	resNamed, ok := r.resObj.Type().(*types.Named)
