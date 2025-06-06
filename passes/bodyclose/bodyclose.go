@@ -14,20 +14,16 @@ import (
 	"golang.org/x/tools/go/ssa"
 )
 
-var (
-	checkConsumption = flag.Bool("check-consumption", false, "also check that response body is consumed before closing")
-)
-
 var Analyzer = &analysis.Analyzer{
 	Name: "bodyclose",
 	Doc:  Doc,
-	Run:  new(runner).run,
+	Run:  run,
 	Requires: []*analysis.Analyzer{
 		buildssa.Analyzer,
 	},
 	Flags: func() flag.FlagSet {
 		fs := flag.NewFlagSet("bodyclose", flag.ExitOnError)
-		fs.BoolVar(checkConsumption, "check-consumption", false, "also check that response body is consumed before closing")
+		fs.Bool("check-consumption", false, "also check that response body is consumed before closing")
 		return *fs
 	}(),
 }
@@ -41,20 +37,26 @@ const (
 )
 
 type runner struct {
-	pass         *analysis.Pass
-	resObj       types.Object
-	resTyp       *types.Pointer
-	bodyObj      types.Object
-	closeMthd    *types.Func
-	skipFile     map[*ast.File]bool
-	ioDiscardObj types.Object
-	ioCopyObj    types.Object
+	pass             *analysis.Pass
+	resObj           types.Object
+	resTyp           *types.Pointer
+	bodyObj          types.Object
+	closeMthd        *types.Func
+	skipFile         map[*ast.File]bool
+	ioDiscardObj     types.Object
+	ioCopyObj        types.Object
+	checkConsumption bool
 }
 
-// run executes an analysis for the pass. The receiver is passed
-// by value because this func is called in parallel for different passes.
-func (r runner) run(pass *analysis.Pass) (interface{}, error) {
-	r.pass = pass
+// run executes an analysis for the pass
+func run(pass *analysis.Pass) (interface{}, error) {
+	// Get the flag value from the analyzer
+	checkConsumption := pass.Analyzer.Flags.Lookup("check-consumption").Value.(flag.Getter).Get().(bool)
+	
+	r := runner{
+		pass:             pass,
+		checkConsumption: checkConsumption,
+	}
 	funcs := pass.ResultOf[buildssa.Analyzer].(*buildssa.SSA).SrcFuncs
 
 	r.resObj = analysisutil.LookupFromImports(pass.Pkg.Imports(), nethttpPath, "Response")
@@ -64,7 +66,7 @@ func (r runner) run(pass *analysis.Pass) (interface{}, error) {
 	}
 
 	// Initialize io objects if consumption checking is enabled
-	if *checkConsumption {
+	if r.checkConsumption {
 		r.ioDiscardObj = analysisutil.LookupFromImports(pass.Pkg.Imports(), ioPath, "Discard")
 		r.ioCopyObj = analysisutil.LookupFromImports(pass.Pkg.Imports(), ioPath, "Copy")
 	}
@@ -115,7 +117,11 @@ FuncLoop:
 			for i := range b.Instrs {
 				pos := b.Instrs[i].Pos()
 				if r.isopen(b, i) {
-					pass.Reportf(pos, "response body must be closed")
+					if r.checkConsumption {
+						pass.Reportf(pos, "response body must be closed and consumed")
+					} else {
+						pass.Reportf(pos, "response body must be closed")
+					}
 				}
 			}
 		}
@@ -236,10 +242,18 @@ func (r *runner) isopen(b *ssa.BasicBlock, i int) bool {
 						return true
 					}
 					ccalls := *bOp.Referrers()
+					hasClose := false
+					hasConsumption := !r.checkConsumption // If not checking consumption, assume it's consumed
 					for _, ccall := range ccalls {
 						if r.isCloseCall(ccall) {
-							return false
+							hasClose = true
 						}
+						if r.checkConsumption && r.isBodyConsumed(bOp, ccall) {
+							hasConsumption = true
+						}
+					}
+					if hasClose && hasConsumption {
+						return false
 					}
 				}
 			case *ssa.Phi: // Called in the higher-level block
@@ -262,10 +276,18 @@ func (r *runner) isopen(b *ssa.BasicBlock, i int) bool {
 								return true
 							}
 							ccalls := *bOp.Referrers()
+							hasClose := false
+							hasConsumption := !r.checkConsumption // If not checking consumption, assume it's consumed
 							for _, ccall := range ccalls {
 								if r.isCloseCall(ccall) {
-									return false
+									hasClose = true
 								}
+								if r.checkConsumption && r.isBodyConsumed(bOp, ccall) {
+									hasConsumption = true
+								}
+							}
+							if hasClose && hasConsumption {
+								return false
 							}
 						}
 					}
@@ -317,6 +339,71 @@ func (r *runner) getBodyOp(instr ssa.Instruction) (*ssa.UnOp, bool) {
 		return nil, false
 	}
 	return op, true
+}
+
+func (r *runner) isBodyConsumed(bodyOp *ssa.UnOp, instr ssa.Instruction) bool {
+	// Search the entire function for consumption patterns
+	fn := bodyOp.Block().Parent()
+	
+	// Simple heuristic: if there's a consumption function in the same function as the body,
+	// assume the body is consumed. This is not perfect but covers most common cases.
+	for _, block := range fn.Blocks {
+		for _, blockInstr := range block.Instrs {
+			if call, ok := blockInstr.(*ssa.Call); ok {
+				if r.isConsumptionFunction(call) {
+					// Found a consumption function in the same function
+					return true
+				}
+			}
+		}
+	}
+	
+	return false
+}
+
+func (r *runner) isConsumptionFunction(call *ssa.Call) bool {
+	if call.Call.StaticCallee() != nil {
+		callee := call.Call.StaticCallee()
+		if callee.Pkg != nil {
+			pkg := callee.Pkg.Pkg.Path()
+			name := callee.Name()
+			
+			// Check for known consumption functions
+			if (pkg == ioPath && (name == "Copy" || name == "ReadAll")) ||
+			   (pkg == "io/ioutil" && name == "ReadAll") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (r *runner) refersToBody(val ssa.Value, bodyOp *ssa.UnOp) bool {
+	// Direct reference
+	if val == bodyOp {
+		return true
+	}
+	
+	// Check if the value is derived from the body through a chain of operations
+	switch v := val.(type) {
+	case *ssa.UnOp:
+		// Check if this UnOp operates on the body
+		if v.X == bodyOp {
+			return true
+		}
+	case *ssa.FieldAddr:
+		// Check if this is accessing a field of the body
+		if v.X == bodyOp {
+			return true
+		}
+	case *ssa.ChangeInterface:
+		// Check if this is a type conversion of the body
+		if v.X == bodyOp {
+			return true
+		}
+	}
+	
+	return false
 }
 
 func (r *runner) isCloseCall(ccall ssa.Instruction) bool {

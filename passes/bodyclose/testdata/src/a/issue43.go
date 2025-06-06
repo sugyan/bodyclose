@@ -6,7 +6,7 @@ import (
 )
 
 func issue43_f1() {
-	resp, err := http.Get("http://example.com/") // OK with flag disabled, should warn with flag enabled
+	resp, err := http.Get("http://example.com/") 
 	if err != nil {
 		return
 	}
@@ -41,7 +41,7 @@ func issue43_f4() {
 }
 
 func issue43_f5() {
-	resp, err := http.Get("http://example.com/") // OK with flag disabled, should warn with flag enabled
+	resp, err := http.Get("http://example.com/") 
 	if err != nil {
 		return
 	}
