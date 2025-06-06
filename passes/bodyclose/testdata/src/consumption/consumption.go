@@ -1,14 +1,20 @@
 package consumption
 
 import (
+	"bufio"
+	"encoding/json"
 	"io"
+	"io/ioutil"
 	"net/http"
 )
 
-// These test cases are for consumption checking enabled mode
+// Test cases for consumption checking - documents exactly what patterns are supported
 
-func consumedWithCopy() {
-	resp, err := http.Get("http://example.com/") // OK - body consumed with io.Copy
+// ✅ SUPPORTED PATTERNS (should pass - no errors)
+
+// Pattern 1: io.Copy with io.Discard
+func consumedWithIOCopy() {
+	resp, err := http.Get("http://example.com/") // OK - io.Copy detected
 	if err != nil {
 		return
 	}
@@ -16,8 +22,9 @@ func consumedWithCopy() {
 	io.Copy(io.Discard, resp.Body)
 }
 
-func consumedWithReadAll() {
-	resp, err := http.Get("http://example.com/") // OK - body consumed with io.ReadAll
+// Pattern 2: io.ReadAll
+func consumedWithIOReadAll() {
+	resp, err := http.Get("http://example.com/") // OK - io.ReadAll detected  
 	if err != nil {
 		return
 	}
@@ -25,27 +32,57 @@ func consumedWithReadAll() {
 	_, _ = io.ReadAll(resp.Body)
 }
 
-func notConsumed1() {
-	resp, err := http.Get("http://example.com/") // want "response body must be closed and consumed"
+// Pattern 3: ioutil.ReadAll (legacy)
+func consumedWithIoutilReadAll() {
+	resp, err := http.Get("http://example.com/") // OK - ioutil.ReadAll detected
 	if err != nil {
 		return
 	}
 	defer resp.Body.Close()
-	// Body not consumed
+	_, _ = ioutil.ReadAll(resp.Body)
 }
 
-func notConsumed2() {
-	resp, err := http.Get("http://example.com/") // want "response body must be closed and consumed"
+// Pattern 4: json.NewDecoder
+func consumedWithJSONDecoder() {
+	resp, err := http.Get("http://example.com/") // OK - json.NewDecoder detected
 	if err != nil {
 		return
 	}
 	defer resp.Body.Close()
-	// Just accessing status, not consuming body
-	_ = resp.Status
+	
+	var data map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&data)
 }
 
+// Pattern 5: bufio.NewScanner
+func consumedWithBufioScanner() {
+	resp, err := http.Get("http://example.com/") // OK - bufio.NewScanner detected
+	if err != nil {
+		return
+	}
+	defer resp.Body.Close()
+	
+	scanner := bufio.NewScanner(resp.Body)
+	for scanner.Scan() {
+		_ = scanner.Text()
+	}
+}
+
+// Pattern 6: bufio.NewReader
+func consumedWithBufioReader() {
+	resp, err := http.Get("http://example.com/") // OK - bufio.NewReader detected
+	if err != nil {
+		return
+	}
+	defer resp.Body.Close()
+	
+	reader := bufio.NewReader(resp.Body)
+	_, _, _ = reader.ReadLine()
+}
+
+// Pattern 7: Helper function with known consumption
 func consumedInHelper() {
-	resp, err := http.Get("http://example.com/") // OK - consumed in helper function
+	resp, err := http.Get("http://example.com/") // OK - helper uses io.Copy
 	if err != nil {
 		return
 	}
@@ -54,16 +91,68 @@ func consumedInHelper() {
 
 func drainAndClose(resp *http.Response) {
 	if resp != nil && resp.Body != nil {
-		io.Copy(io.Discard, resp.Body)
+		io.Copy(io.Discard, resp.Body) // This io.Copy is detected
 		resp.Body.Close()
 	}
 }
 
-func notClosedAtAll() {
+// ⚠️  FALSE POSITIVES (these will incorrectly show errors)
+
+// These patterns actually DO consume the body correctly, but are not detected 
+// by the current implementation. In real code, use //nolint:bodyclose to suppress.
+
+func falsePositiveDirectRead() {
+	resp, err := http.Get("http://example.com/") // want "response body must be closed and consumed"
+	if err != nil {
+		return
+	}
+	defer resp.Body.Close()
+	
+	// This DOES consume the body, but analyzer doesn't detect it
+	buf := make([]byte, 1024)
+	resp.Body.Read(buf) // Actually consumes the body
+}
+
+func falsePositiveCustomFunction() {
+	resp, err := http.Get("http://example.com/") // want "response body must be closed and consumed"
+	if err != nil {
+		return
+	}
+	defer resp.Body.Close()
+	
+	// This DOES consume the body, but analyzer doesn't detect it
+	customProcess(resp.Body) // Actually consumes the body
+}
+
+func customProcess(r io.Reader) {
+	// Custom processing logic
+	buf := make([]byte, 1024)
+	for {
+		n, err := r.Read(buf)
+		if err != nil || n == 0 {
+			break
+		}
+	}
+}
+
+// ❌ REAL PROBLEMS (correctly detected errors)
+
+// These cases should show errors because the body is NOT properly consumed
+
+func actuallyNotConsumed() {
+	resp, err := http.Get("http://example.com/") // want "response body must be closed and consumed"
+	if err != nil {
+		return
+	}
+	defer resp.Body.Close()
+	// Body is closed but NOT consumed - this is a real problem
+}
+
+func neitherClosedNorConsumed() {
 	resp, err := http.Get("http://example.com/") // want "response body must be closed and consumed"
 	if err != nil {
 		return
 	}
 	_ = resp
-	// Neither closed nor consumed
+	// Body is neither closed nor consumed - this is a real problem
 }

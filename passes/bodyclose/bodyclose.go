@@ -348,16 +348,13 @@ func (r *runner) getBodyOp(instr ssa.Instruction) (*ssa.UnOp, bool) {
 }
 
 func (r *runner) isBodyConsumed(bodyOp *ssa.UnOp, instr ssa.Instruction) bool {
-	// Search the entire function for consumption patterns
+	// Search the entire function for known consumption functions
 	fn := bodyOp.Block().Parent()
 	
-	// Simple heuristic: if there's a consumption function in the same function as the body,
-	// assume the body is consumed. This is not perfect but covers most common cases.
 	for _, block := range fn.Blocks {
 		for _, blockInstr := range block.Instrs {
 			if call, ok := blockInstr.(*ssa.Call); ok {
 				if r.isConsumptionFunction(call) {
-					// Found a consumption function in the same function
 					return true
 				}
 			}
@@ -376,7 +373,9 @@ func (r *runner) isConsumptionFunction(call *ssa.Call) bool {
 			
 			// Check for known consumption functions
 			if (pkg == ioPath && (name == "Copy" || name == "ReadAll")) ||
-			   (pkg == "io/ioutil" && name == "ReadAll") {
+			   (pkg == "io/ioutil" && name == "ReadAll") ||
+			   (pkg == "encoding/json" && name == "NewDecoder") ||
+			   (pkg == "bufio" && (name == "NewScanner" || name == "NewReader")) {
 				return true
 			}
 		}
