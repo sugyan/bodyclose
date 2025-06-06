@@ -57,6 +57,12 @@ func run(pass *analysis.Pass) (interface{}, error) {
 		pass:             pass,
 		checkConsumption: checkConsumption,
 	}
+	
+	return runWithRunner(pass, &r)
+}
+
+// runWithRunner executes analysis with a pre-configured runner
+func runWithRunner(pass *analysis.Pass, r *runner) (interface{}, error) {
 	funcs := pass.ResultOf[buildssa.Analyzer].(*buildssa.SSA).SrcFuncs
 
 	r.resObj = analysisutil.LookupFromImports(pass.Pkg.Imports(), nethttpPath, "Response")
