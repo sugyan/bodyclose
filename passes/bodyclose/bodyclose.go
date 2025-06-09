@@ -32,7 +32,6 @@ const (
 	Doc = "checks whether HTTP response body is closed successfully"
 
 	nethttpPath = "net/http"
-	ioPath      = "io"
 	closeMethod = "Close"
 )
 
@@ -52,12 +51,6 @@ func run(pass *analysis.Pass) (interface{}, error) {
 		pass:             pass,
 		checkConsumption: checkConsumptionFlag,
 	}
-
-	return runWithRunner(pass, &r)
-}
-
-// runWithRunner executes analysis with a pre-configured runner
-func runWithRunner(pass *analysis.Pass, r *runner) (interface{}, error) {
 	funcs := pass.ResultOf[buildssa.Analyzer].(*buildssa.SSA).SrcFuncs
 
 	r.resObj = analysisutil.LookupFromImports(pass.Pkg.Imports(), nethttpPath, "Response")
@@ -243,7 +236,7 @@ func (r *runner) isopen(b *ssa.BasicBlock, i int) bool {
 						if r.isCloseCall(ccall) {
 							hasClose = true
 						}
-						if r.checkConsumption && r.isBodyConsumed(bOp, ccall) {
+						if r.checkConsumption && r.findConsumptionForBody(bOp) {
 							hasConsumption = true
 						}
 					}
@@ -277,7 +270,7 @@ func (r *runner) isopen(b *ssa.BasicBlock, i int) bool {
 								if r.isCloseCall(ccall) {
 									hasClose = true
 								}
-								if r.checkConsumption && r.isBodyConsumed(bOp, ccall) {
+								if r.checkConsumption && r.findConsumptionForBody(bOp) {
 									hasConsumption = true
 								}
 							}
@@ -337,14 +330,15 @@ func (r *runner) getBodyOp(instr ssa.Instruction) (*ssa.UnOp, bool) {
 	return op, true
 }
 
-func (r *runner) isBodyConsumed(bodyOp *ssa.UnOp, instr ssa.Instruction) bool {
+// findConsumptionForBody searches the function for consumption calls that use the specific response body
+func (r *runner) findConsumptionForBody(bodyOp *ssa.UnOp) bool {
 	fn := bodyOp.Block().Parent()
 
 	// Search for consumption functions that specifically consume this response body
 	for _, block := range fn.Blocks {
 		for _, blockInstr := range block.Instrs {
 			if call, ok := blockInstr.(*ssa.Call); ok {
-				if r.isConsumptionFunction(call) && r.callConsumesResponseBody(call, bodyOp) {
+				if r.isConsumptionFunction(call) && r.checkCallUsesBody(call, bodyOp) {
 					return true
 				}
 			}
@@ -354,7 +348,8 @@ func (r *runner) isBodyConsumed(bodyOp *ssa.UnOp, instr ssa.Instruction) bool {
 	return false
 }
 
-func (r *runner) callConsumesResponseBody(call *ssa.Call, responseBodyOp *ssa.UnOp) bool {
+// checkCallUsesBody checks if a consumption function call uses the specific response body
+func (r *runner) checkCallUsesBody(call *ssa.Call, responseBodyOp *ssa.UnOp) bool {
 	// Get the FieldAddr of the response body we're checking
 	responseBodyFieldAddr, ok := responseBodyOp.X.(*ssa.FieldAddr)
 	if !ok {
@@ -363,7 +358,7 @@ func (r *runner) callConsumesResponseBody(call *ssa.Call, responseBodyOp *ssa.Un
 
 	// Check if any argument to the call refers to this specific response body
 	for _, arg := range call.Call.Args {
-		if r.argIsResponseBody(arg, responseBodyFieldAddr) {
+		if r.checkArgumentMatchesBody(arg, responseBodyFieldAddr) {
 			return true
 		}
 	}
@@ -371,7 +366,8 @@ func (r *runner) callConsumesResponseBody(call *ssa.Call, responseBodyOp *ssa.Un
 	return false
 }
 
-func (r *runner) argIsResponseBody(arg ssa.Value, responseBodyFieldAddr *ssa.FieldAddr) bool {
+// checkArgumentMatchesBody checks if a function argument refers to the same response body instance
+func (r *runner) checkArgumentMatchesBody(arg ssa.Value, responseBodyFieldAddr *ssa.FieldAddr) bool {
 	switch v := arg.(type) {
 	case *ssa.FieldAddr:
 		// Direct field access - check if it's accessing Body field of same response
@@ -400,7 +396,7 @@ func (r *runner) isConsumptionFunction(call *ssa.Call) bool {
 			name := callee.Name()
 
 			// Check for known consumption functions
-			if (pkg == ioPath && (name == "Copy" || name == "ReadAll")) ||
+			if (pkg == "io" && (name == "Copy" || name == "ReadAll")) ||
 				(pkg == "io/ioutil" && name == "ReadAll") ||
 				(pkg == "encoding/json" && name == "NewDecoder") ||
 				(pkg == "bufio" && (name == "NewScanner" || name == "NewReader")) {

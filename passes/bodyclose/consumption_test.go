@@ -8,6 +8,10 @@ import (
 )
 
 func TestConsumption(t *testing.T) {
+	// Create analyzer with consumption flag enabled
+	analyzer := *bodyclose.Analyzer // Copy the analyzer
+	analyzer.Flags.Set("check-consumption", "true")
+
 	testdata := analysistest.TestData()
-	analysistest.Run(t, testdata, bodyclose.ConsumptionAnalyzer, "consumption")
+	analysistest.Run(t, testdata, &analyzer, "consumption")
 }
