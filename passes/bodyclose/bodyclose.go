@@ -229,18 +229,7 @@ func (r *runner) isopen(b *ssa.BasicBlock, i int) bool {
 					if len(*bOp.Referrers()) == 0 {
 						return true
 					}
-					ccalls := *bOp.Referrers()
-					hasClose := false
-					hasConsumption := !r.checkConsumption // If not checking consumption, assume it's consumed
-					for _, ccall := range ccalls {
-						if r.isCloseCall(ccall) {
-							hasClose = true
-						}
-						if r.checkConsumption && r.findConsumptionForBody(bOp) {
-							hasConsumption = true
-						}
-					}
-					if hasClose && hasConsumption {
+					if r.isBodyProperlyHandled(bOp) {
 						return false
 					}
 				}
@@ -263,18 +252,7 @@ func (r *runner) isopen(b *ssa.BasicBlock, i int) bool {
 							if len(*bOp.Referrers()) == 0 {
 								return true
 							}
-							ccalls := *bOp.Referrers()
-							hasClose := false
-							hasConsumption := !r.checkConsumption // If not checking consumption, assume it's consumed
-							for _, ccall := range ccalls {
-								if r.isCloseCall(ccall) {
-									hasClose = true
-								}
-								if r.checkConsumption && r.findConsumptionForBody(bOp) {
-									hasConsumption = true
-								}
-							}
-							if hasClose && hasConsumption {
+							if r.isBodyProperlyHandled(bOp) {
 								return false
 							}
 						}
@@ -330,15 +308,32 @@ func (r *runner) getBodyOp(instr ssa.Instruction) (*ssa.UnOp, bool) {
 	return op, true
 }
 
-// findConsumptionForBody searches the function for consumption calls that use the specific response body
-func (r *runner) findConsumptionForBody(bodyOp *ssa.UnOp) bool {
+// isBodyProperlyHandled checks if response body is properly handled (closed and optionally consumed based on flag)
+func (r *runner) isBodyProperlyHandled(bOp *ssa.UnOp) bool {
+	ccalls := *bOp.Referrers()
+	hasClose := false
+	hasConsumption := !r.checkConsumption // If not checking consumption, assume it's consumed
+
+	for _, ccall := range ccalls {
+		if r.isCloseCall(ccall) {
+			hasClose = true
+		}
+		if r.checkConsumption && r.hasConsumptionForBody(bOp) {
+			hasConsumption = true
+		}
+	}
+	return hasClose && hasConsumption
+}
+
+// hasConsumptionForBody searches the function for consumption calls that use the specific response body
+func (r *runner) hasConsumptionForBody(bodyOp *ssa.UnOp) bool {
 	fn := bodyOp.Block().Parent()
 
 	// Search for consumption functions that specifically consume this response body
 	for _, block := range fn.Blocks {
 		for _, blockInstr := range block.Instrs {
 			if call, ok := blockInstr.(*ssa.Call); ok {
-				if r.isConsumptionFunction(call) && r.checkCallUsesBody(call, bodyOp) {
+				if r.isConsumptionFunction(call) && r.isCallUsingBody(call, bodyOp) {
 					return true
 				}
 			}
@@ -348,8 +343,8 @@ func (r *runner) findConsumptionForBody(bodyOp *ssa.UnOp) bool {
 	return false
 }
 
-// checkCallUsesBody checks if a consumption function call uses the specific response body
-func (r *runner) checkCallUsesBody(call *ssa.Call, responseBodyOp *ssa.UnOp) bool {
+// isCallUsingBody checks if a consumption function call uses the specific response body
+func (r *runner) isCallUsingBody(call *ssa.Call, responseBodyOp *ssa.UnOp) bool {
 	// Get the FieldAddr of the response body we're checking
 	responseBodyFieldAddr, ok := responseBodyOp.X.(*ssa.FieldAddr)
 	if !ok {
@@ -358,7 +353,7 @@ func (r *runner) checkCallUsesBody(call *ssa.Call, responseBodyOp *ssa.UnOp) boo
 
 	// Check if any argument to the call refers to this specific response body
 	for _, arg := range call.Call.Args {
-		if r.checkArgumentMatchesBody(arg, responseBodyFieldAddr) {
+		if r.isArgumentMatchingBody(arg, responseBodyFieldAddr) {
 			return true
 		}
 	}
@@ -366,8 +361,8 @@ func (r *runner) checkCallUsesBody(call *ssa.Call, responseBodyOp *ssa.UnOp) boo
 	return false
 }
 
-// checkArgumentMatchesBody checks if a function argument refers to the same response body instance
-func (r *runner) checkArgumentMatchesBody(arg ssa.Value, responseBodyFieldAddr *ssa.FieldAddr) bool {
+// isArgumentMatchingBody checks if a function argument refers to the same response body instance
+func (r *runner) isArgumentMatchingBody(arg ssa.Value, responseBodyFieldAddr *ssa.FieldAddr) bool {
 	switch v := arg.(type) {
 	case *ssa.FieldAddr:
 		// Direct field access - check if it's accessing Body field of same response
