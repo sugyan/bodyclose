@@ -50,7 +50,7 @@ Example of suppressing false positives:
 func customBodyProcessing() {
     resp, _ := http.Get("http://example.com/") //nolint:bodyclose
     defer resp.Body.Close()
-    
+
     // Custom consumption logic that analyzer doesn't recognize
     buf := make([]byte, 1024)
     resp.Body.Read(buf) // This actually consumes the body

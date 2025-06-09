@@ -17,19 +17,16 @@ var ConsumptionAnalyzer = &analysis.Analyzer{
 	},
 	Flags: func() flag.FlagSet {
 		fs := flag.NewFlagSet("bodyconsumption", flag.ExitOnError)
-		fs.Bool("check-consumption", true, "also check that response body is consumed before closing")
+		fs.Bool("check-consumption", true, "also check that response body is consumed")
 		return *fs
 	}(),
 }
 
 // runWithConsumption runs the analyzer with consumption checking enabled
 func runWithConsumption(pass *analysis.Pass) (interface{}, error) {
-	// Force consumption checking to true
-	checkConsumption := true
-
 	r := runner{
 		pass:             pass,
-		checkConsumption: checkConsumption,
+		checkConsumption: true,
 	}
 
 	return runWithRunner(pass, &r)

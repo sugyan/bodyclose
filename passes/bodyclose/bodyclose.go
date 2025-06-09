@@ -305,8 +305,6 @@ func (r *runner) getReqCall(instr ssa.Instruction) (*ssa.Call, bool) {
 		return nil, false
 	}
 
-	// Any function call that returns *http.Response should be checked
-	// This includes both direct HTTP client calls and wrapper functions
 	return call, true
 }
 

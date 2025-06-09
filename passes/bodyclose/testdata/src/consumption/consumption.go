@@ -24,7 +24,7 @@ func consumedWithIOCopy() {
 
 // Pattern 2: io.ReadAll
 func consumedWithIOReadAll() {
-	resp, err := http.Get("http://example.com/") // OK - io.ReadAll detected  
+	resp, err := http.Get("http://example.com/") // OK - io.ReadAll detected
 	if err != nil {
 		return
 	}
@@ -49,7 +49,7 @@ func consumedWithJSONDecoder() {
 		return
 	}
 	defer resp.Body.Close()
-	
+
 	var data map[string]interface{}
 	json.NewDecoder(resp.Body).Decode(&data)
 }
@@ -61,7 +61,7 @@ func consumedWithBufioScanner() {
 		return
 	}
 	defer resp.Body.Close()
-	
+
 	scanner := bufio.NewScanner(resp.Body)
 	for scanner.Scan() {
 		_ = scanner.Text()
@@ -75,7 +75,7 @@ func consumedWithBufioReader() {
 		return
 	}
 	defer resp.Body.Close()
-	
+
 	reader := bufio.NewReader(resp.Body)
 	_, _, _ = reader.ReadLine()
 }
@@ -98,7 +98,7 @@ func drainAndClose(resp *http.Response) {
 
 // ⚠️  FALSE POSITIVES (these will incorrectly show errors)
 
-// These patterns actually DO consume the body correctly, but are not detected 
+// These patterns actually DO consume the body correctly, but are not detected
 // by the current implementation. In real code, use //nolint:bodyclose to suppress.
 
 func falsePositiveDirectRead() {
@@ -107,7 +107,7 @@ func falsePositiveDirectRead() {
 		return
 	}
 	defer resp.Body.Close()
-	
+
 	// This DOES consume the body, but analyzer doesn't detect it
 	buf := make([]byte, 1024)
 	resp.Body.Read(buf) // Actually consumes the body
@@ -119,11 +119,10 @@ func falsePositiveCustomFunction() {
 		return
 	}
 	defer resp.Body.Close()
-	
+
 	// This DOES consume the body, but analyzer doesn't detect it
 	customProcess(resp.Body) // Actually consumes the body
 }
-
 
 func customProcess(r io.Reader) {
 	// Custom processing logic
@@ -158,12 +157,11 @@ func neitherClosedNorConsumed() {
 	// Body is neither closed nor consumed - this is a real problem
 }
 
-
 // RequestBody/ResponseBody distinction test cases
 func requestBodyReadShouldNotInterfere(w http.ResponseWriter, r *http.Request) {
 	// Read incoming request body
 	_, _ = io.ReadAll(r.Body) // This is REQUEST body consumption
-	
+
 	// Make outgoing request - response body should still be detected as unconsumed
 	resp, err := http.Get("http://example.com/") // want "response body must be closed and consumed"
 	if err != nil {
@@ -177,7 +175,7 @@ func localRequestBodyDistinction() {
 	// Create local request and read its body
 	req, _ := http.NewRequest("POST", "http://example.com", nil)
 	_, _ = io.ReadAll(req.Body) // This is REQUEST body consumption
-	
+
 	// Make HTTP request - response body not consumed, should be detected
 	resp, _ := http.Get("http://example.com") // want "response body must be closed and consumed"
 	defer resp.Body.Close()
@@ -186,8 +184,8 @@ func localRequestBodyDistinction() {
 func functionParameterRequestBody(req *http.Request) {
 	// Read request body from function parameter
 	_, _ = io.ReadAll(req.Body) // This is REQUEST body consumption
-	
-	// Make HTTP request - response body not consumed, should be detected  
+
+	// Make HTTP request - response body not consumed, should be detected
 	resp, _ := http.Get("http://example.com") // want "response body must be closed and consumed"
 	defer resp.Body.Close()
 }
@@ -195,14 +193,14 @@ func functionParameterRequestBody(req *http.Request) {
 func properResponseBodyConsumptionWithRequestBody(w http.ResponseWriter, r *http.Request) {
 	// Read request body
 	_, _ = io.ReadAll(r.Body) // This is REQUEST body consumption
-	
+
 	// Make HTTP request - response body properly consumed, should pass
 	resp, _ := http.Get("http://example.com") // OK - response body properly consumed
 	defer resp.Body.Close()
 	io.ReadAll(resp.Body) // This is RESPONSE body consumption
 }
 
-// closeBeforeConsume is commented out because current implementation 
+// closeBeforeConsume is commented out because current implementation
 // doesn't detect execution order (documented limitation)
 //
 // func closeBeforeConsume() {
