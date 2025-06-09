@@ -311,18 +311,20 @@ func (r *runner) getBodyOp(instr ssa.Instruction) (*ssa.UnOp, bool) {
 // isBodyProperlyHandled checks if response body is properly handled (closed and optionally consumed based on flag)
 func (r *runner) isBodyProperlyHandled(bOp *ssa.UnOp) bool {
 	ccalls := *bOp.Referrers()
-	hasClose := false
-	hasConsumption := !r.checkConsumption // If not checking consumption, assume it's consumed
 
 	for _, ccall := range ccalls {
 		if r.isCloseCall(ccall) {
-			hasClose = true
-		}
-		if r.checkConsumption && r.hasConsumptionForBody(bOp) {
-			hasConsumption = true
+			// Early return if consumption checking is disabled
+			if !r.checkConsumption {
+				return true
+			}
+			// Close found and consumption checking enabled - check consumption
+			return r.hasConsumptionForBody(bOp)
 		}
 	}
-	return hasClose && hasConsumption
+
+	// No close call found
+	return false
 }
 
 // hasConsumptionForBody searches the function for consumption calls that use the specific response body
